@@ -245,13 +245,6 @@ npm run scan -- path/to/project
 
 Dependabot keeps the dev tooling and workflow actions up to date.
 
-### Releasing
-
-1. Bump `version` in `package.json` and commit.
-2. Tag and push: `git tag v1.2.3 && git push origin v1.2.3`. Push the tag rather than creating the release in the web UI: the workflow needs to move the tag onto the build.
-3. The **Release** workflow tests the tag, builds `dist/`, commits it on top of the tagged commit, points `v1.2.3` and `v1` at that commit, and creates the GitHub release with generated notes.
-4. For the Marketplace: open the release, click **Edit**, tick **Publish this Action to the GitHub Marketplace**, and save. GitHub doesn't allow this step to be automated.
-
 ## Security
 
 Found a vulnerability in the scanner itself (not in a game it scanned)? Please report it privately, as described in [SECURITY.md](SECURITY.md).
