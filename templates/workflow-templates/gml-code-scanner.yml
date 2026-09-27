@@ -1,0 +1,35 @@
+# GML Code Scanner: bugs, security vulnerabilities and performance problems in
+# GameMaker (GML) projects. https://github.com/Mackery6969/GML-Code-Scanner
+
+name: GML Code Scanner
+
+on:
+  push:
+    branches: [ $default-branch ]
+  pull_request:
+    branches: [ $default-branch ]
+  schedule:
+    - cron: "30 4 * * 1" # weekly, to pick up new rules
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # for actions/checkout to fetch code
+      security-events: write # upload results to code scanning (skipped where it isn't available)
+      pull-requests: read # annotate only the lines a pull request changes
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # Set "path" if your GameMaker project (.yyp) isn't at the repository root.
+      - name: Run GML Code Scanner
+        uses: Mackery6969/GML-Code-Scanner@v1
+        with:
+          # Pull requests fail on new errors in the lines they change; other runs only report.
+          fail-on: ${{ github.event_name == 'pull_request' && 'error' || 'none' }}

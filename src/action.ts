@@ -36,6 +36,10 @@ function warn(message: string): void {
   process.stdout.write(`::warning::${escapeData(message)}\n`);
 }
 
+function notice(message: string): void {
+  process.stdout.write(`::notice::${escapeData(message)}\n`);
+}
+
 /** The pull request number when running on a pull_request(_target) event. */
 function pullRequestNumber(): number | undefined {
   const path = process.env.GITHUB_EVENT_PATH;
@@ -176,6 +180,9 @@ async function run(): Promise<void> {
           ? " Findings are still shown as annotations and in the job summary. To see them in the Security tab, give the workflow `permissions: security-events: write` and make sure code scanning is available (public repositories, or private ones with GitHub Code Security). Pull requests from forks can't upload; set upload: false to silence this."
           : "";
         if (required) fail(err.message + hint);
+        // In auto mode, "code scanning isn't available here" (private repo without Code
+        // Security, fork PR) is an expected outcome, not a problem with the run.
+        else if (err.unavailable) notice(`Code scanning isn't available for this run, so results are shown as annotations and in the job summary instead (${err.message.replace(/^GitHub rejected the SARIF upload /, "")}). Set upload: false to skip the upload.`);
         else warn(err.message + hint);
       }
     }

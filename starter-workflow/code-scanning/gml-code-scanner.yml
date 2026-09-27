@@ -26,6 +26,7 @@ jobs:
     permissions:
       contents: read # for actions/checkout to fetch code
       security-events: write # for the scanner to upload results to code scanning
+      pull-requests: read # to annotate only the lines a pull request changes
     name: Scan
     runs-on: ubuntu-latest
     steps:
@@ -33,7 +34,9 @@ jobs:
         uses: actions/checkout@v7
 
       # Set "path" if your GameMaker project (.yyp) is not at the repository root.
+      # Private repositories without GitHub Code Security still get pull request
+      # annotations and a job summary; the upload to code scanning is skipped.
       - name: Run GML Code Scanner
-        uses: Mackery6969/GML-Code-Scanner@0000000000000000000000000000000000000000 # v1.0.0 (replace with the release commit SHA)
+        uses: Mackery6969/GML-Code-Scanner@eb807119afd6bc585005f21c3acb2a3d98aa2bbe # v1.0.2
         with:
           fail-on: none

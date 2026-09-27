@@ -1,6 +1,6 @@
 {
   "name": "gml-code-scanner",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Static analysis and security scanning for GameMaker (GML) projects. Finds bugs and vulnerabilities and reports them as SARIF for GitHub code scanning.",
   "type": "module",
   "license": "MIT",

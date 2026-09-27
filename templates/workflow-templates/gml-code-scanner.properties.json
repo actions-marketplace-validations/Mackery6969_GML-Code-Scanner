@@ -1,0 +1,7 @@
+{
+    "name": "GML Code Scanner",
+    "description": "Find bugs, security vulnerabilities and performance problems in GameMaker (GML) projects.",
+    "iconName": "gml-code-scanner",
+    "categories": ["Code Scanning", "Game Maker Language"],
+    "filePatterns": [".*\\.yyp$"]
+}

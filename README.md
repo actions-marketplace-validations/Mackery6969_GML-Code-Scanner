@@ -40,10 +40,14 @@ jobs:
 That's all. Like CodeQL's analysis step, the action uploads its results to **Security → Code scanning** itself, adds annotations to pull requests, and writes a summary to the job page. If your GameMaker project isn't at the repository root, add `with: path: MyGame`.
 
 - **Public repositories:** code scanning is free, and results show up in the Security tab after the first run.
-- **Private repositories without GitHub Code Security:** the upload is skipped with a notice, and you still get pull request annotations and the job summary. Add `with: upload: false` to silence the notice. On pull requests, only findings on the lines the pull request changes are annotated and can fail the job (see `pr-scope`), so existing issues don't bury new ones.
+- **Private repositories without GitHub Code Security:** the upload is skipped with a short notice, and you still get pull request annotations and the job summary. Add `with: upload: false` to silence the notice. On pull requests, only findings on the lines the pull request changes are annotated and can fail the job (see `pr-scope`), so existing issues don't bury new ones.
 - **Pull requests from forks** can't upload (GitHub gives them a read-only token). They still get annotations.
 
 Want the job to fail on findings? It already does for `error`-level findings. Set `fail-on: warning` to be stricter, or `fail-on: none` to only report.
+
+### One-click setup for your organization
+
+To put GML Code Scanner on your organization's **Actions → New workflow** page, so any repository can add it with **Configure** and get the pre-built workflow, copy the template in [`templates/`](templates) into your organization's `.github` repository.
 
 ## Inputs
 
