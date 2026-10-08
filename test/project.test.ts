@@ -53,6 +53,17 @@ describe("project rules", () => {
     assert.deepEqual(fns.map((f) => f.message), ["Unused function `scr_dead`."]);
   });
 
+  it("unused-function ignores gml_pragma(\"global\") calls and enum holders", () => {
+    const files = {
+      ...eventCode("x = e_dir.left;", "Create_0"),
+      ...scriptCode('function __init_a() {\n\tgml_pragma("global", "__init_a();");\n}', "scr_init_a"),
+      ...scriptCode("function __init_b() {\n\tgml_pragma(\"global\", @'__init_b()');\n}", "scr_init_b"),
+      ...scriptCode("function __dirs() {\n\tenum e_dir { left, right }\n}", "scr_dirs"),
+      ...scriptCode("function __unused_enum() {\n\tenum e_unused { a }\n}", "scr_unused_enum"),
+    };
+    assert.deepEqual(findingsFor(files, "gml/unused-function").map((f) => f.message), ["Unused function `__unused_enum`."]);
+  });
+
   it("objects placed in rooms are used", () => {
     const files = {
       ...eventCode("x = 1;", "Create_0"),

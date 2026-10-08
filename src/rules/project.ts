@@ -1,3 +1,4 @@
+import type * as A from "../parser/ast.ts";
 import type { ProjectContext, Rule, SourceLocation } from "../engine/types.ts";
 import type { YypResourceEntry } from "../project/yy.ts";
 import { code } from "./util.ts";
@@ -223,14 +224,29 @@ export const unusedFunction: Rule = {
     full: "The global function is never called, passed as a value, or named in a string anywhere in the project.",
     help: `This script function is never called, passed as a callback, or named in a string anywhere in the project. It's dead code (or only used by code the scanner doesn't see, such as extensions or dynamic \`asset_get_index\` lookups with computed names).
 
+Two kinds of functions are never reported, because they are used without a direct call:
+
+- functions called from \`gml_pragma("global", "...")\` code, which GameMaker runs before the first room;
+- functions that declare an enum used elsewhere. Enums are global at compile time, so deleting the function would delete the enum.
+
 **How to fix:** delete it, or suppress the note if it's part of a library API.`,
   },
   project(ctx) {
     const { index } = ctx;
     if (!ctx.project.yyp) return; // a partial folder may be used by code the scanner cannot see
+    const enumHolders = new Set<A.FunctionNode>();
+    for (const [enumName, decls] of index.enums) {
+      if (!index.identifierRefs.get(enumName)) continue;
+      for (const d of decls) {
+        for (const fn of index.functionsByNode.values()) {
+          if (fn.file === d.file && fn.isGlobal && d.node.start >= fn.node.start && d.node.end <= fn.node.end) enumHolders.add(fn.node);
+        }
+      }
+    }
     for (const [name, infos] of index.globalFunctions) {
       if (infos.length !== 1) continue;
       const fn = infos[0];
+      if (index.pragmaGlobalCalls.has(name) || enumHolders.has(fn.node)) continue;
       const total = index.identifierRefs.get(name) ?? 0;
       let self = 0;
       for (const ref of index.scopes.get(fn.file)?.refs ?? []) {

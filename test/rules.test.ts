@@ -196,4 +196,20 @@ describe("maintainability rules", () => {
     assert.equal(count(files, "gml/missing-event-inherited"), 1);
     assert.equal(count({ ...files, "objects/obj_child/Create_0.gml": "event_inherited(); speed = 2;" }, "gml/missing-event-inherited"), 0);
   });
+
+  it("declaration-outside-script", () => {
+    const files = {
+      ...eventCode("enum e_state { idle }\n#macro SPEED 4\nglobalvar g_score;\nglobal.lives = 3;", "Create_0"),
+      "rooms/rm_main/RoomCreationCode.gml": "enum e_room { a }\nglobal.level = 1;",
+      "rooms/rm_main/InstanceCreationCode_inst_1.gml": "#macro ROOM_FPS 60",
+      ...scriptCode("enum e_ok { a }\n#macro OK 1\nglobalvar g_ok;", "scr_decl"),
+    };
+    const f = findingsFor(files, "gml/declaration-outside-script");
+    assert.equal(f.length, 5);
+    assert.ok(f.some((x) => /^Enum `e_state` is declared in the Create event of `obj_test`/.test(x.message)));
+    assert.ok(f.some((x) => /^Global variable `g_score`/.test(x.message)));
+    assert.ok(f.some((x) => /^Enum `e_room` is declared in the creation code of room `rm_main`/.test(x.message)));
+    assert.ok(f.some((x) => /^Macro `ROOM_FPS` is declared in the creation code of instance `inst_1` in room `rm_main`/.test(x.message)));
+    assert.ok(f.every((x) => !x.location.file.startsWith("scripts/")));
+  });
 });

@@ -56,6 +56,7 @@
 | [`gml/constant-condition`](#gmlconstantcondition) | note | maintainability | `security-and-quality` |
 | [`gml/switch-fallthrough`](#gmlswitchfallthrough) | warning | correctness | `security-and-quality` |
 | [`gml/duplicate-struct-key`](#gmlduplicatestructkey) | warning | correctness | `default`, `security-extended`, `security-and-quality` |
+| [`gml/declaration-outside-script`](#gmldeclarationoutsidescript) | warning | maintainability | `default`, `security-extended`, `security-and-quality` |
 | [`gml/duplicate-resource`](#gmlduplicateresource) | error | project | `default`, `security-extended`, `security-and-quality` |
 | [`gml/missing-resource-file`](#gmlmissingresourcefile) | error | project | `default`, `security-extended`, `security-and-quality` |
 | [`gml/unregistered-resource`](#gmlunregisteredresource) | error | project | `default`, `security-extended`, `security-and-quality` |
@@ -1077,6 +1078,34 @@ The same key appears twice in a struct literal; the second value silently overwr
 var stats = { hp: 10, speed: 2, hp: 12 };   // hp is 12
 ```
 
+## gml/declaration-outside-script
+
+<a id="gmldeclarationoutsidescript"></a>
+
+**Enum, macro or globalvar declared in an object event or creation code instead of a script.**
+
+Severity: warning · Precision: very-high · Category: maintainability
+
+Enums, macros and `globalvar` declarations are global: GameMaker compiles them into the whole game no matter which file they're written in. Declaring one in an object event, a room's creation code, an instance's creation code or a timeline hides it:
+
+- readers look for shared declarations in scripts, not in the creation code of one room or the Create event of one object;
+- the location suggests it only applies to that room or object, but it doesn't;
+- editor tooling and language servers that only index scripts don't see the declaration, so they report every use of the enum or macro as undeclared.
+
+**How to fix:** move the declaration into a script, next to the functions that use it (or into a dedicated script such as `scr_enums`). This doesn't change behavior: enums and macros are resolved at compile time.
+
+Plain `global.name = value` assignments are **not** reported: creation code is a reasonable place to set up runtime state, and moving such an assignment to a script would change when it runs.
+
+```gml
+// rooms/rm_title/RoomCreationCode.gml (bad)
+enum states { idle, walk, jump }
+#macro ANIMATION_END (image_index >= image_number - 1)
+
+// scripts/scr_states/scr_states.gml (good)
+enum states { idle, walk, jump }
+#macro ANIMATION_END (image_index >= image_number - 1)
+```
+
 ## gml/duplicate-resource
 
 <a id="gmlduplicateresource"></a>
@@ -1150,6 +1179,11 @@ Nothing refers to this object: it isn't placed in any room or sequence, no other
 Severity: note · Precision: medium · Category: project
 
 This script function is never called, passed as a callback, or named in a string anywhere in the project. It's dead code (or only used by code the scanner doesn't see, such as extensions or dynamic `asset_get_index` lookups with computed names).
+
+Two kinds of functions are never reported, because they are used without a direct call:
+
+- functions called from `gml_pragma("global", "...")` code, which GameMaker runs before the first room;
+- functions that declare an enum used elsewhere. Enums are global at compile time, so deleting the function would delete the enum.
 
 **How to fix:** delete it, or suppress the note if it's part of a library API.
 

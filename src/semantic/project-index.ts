@@ -58,6 +58,8 @@ export class ProjectIndex {
   readonly refsByResource = new Map<string, Set<string>>();
   /** Values of all string literals (resource names looked up dynamically). */
   readonly stringLiterals = new Set<string>();
+  /** Functions called from `gml_pragma("global", "...")` code, which GameMaker runs before the first room. */
+  readonly pragmaGlobalCalls = new Set<string>();
   /** Asset name → resource type (objects, sprites, ...), including unregistered folders. */
   readonly assets = new Map<string, string>();
   /** The project sets variables through computed names (`variable_instance_set(id, name, v)`). */
@@ -212,6 +214,12 @@ export class ProjectIndex {
   private recordCall(call: A.CallExpression): void {
     if (call.callee.type !== "Identifier") return;
     const name = call.callee.name;
+    if (name === "gml_pragma") {
+      const [kind, body] = call.arguments;
+      if (kind?.type === "StringLiteral" && kind.value === "global" && body?.type === "StringLiteral") {
+        for (const m of body.value.matchAll(/\b([A-Za-z_]\w*)\s*\(/g)) this.pragmaGlobalCalls.add(m[1]);
+      }
+    }
     const setter = VARIABLE_SETTERS[name];
     if (setter) {
       const arg = call.arguments[setter.nameArg];

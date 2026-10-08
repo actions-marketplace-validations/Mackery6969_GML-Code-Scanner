@@ -1,8 +1,9 @@
 import type * as A from "../parser/ast.ts";
 import { isTerminator, walk } from "../parser/walk.ts";
 import type { Rule } from "../engine/types.ts";
+import type { GmlFile } from "../project/loader.ts";
 import type { Scope } from "../semantic/scope.ts";
-import { code } from "./util.ts";
+import { code, describeEvent } from "./util.ts";
 
 export const legacyEquality: Rule = {
   meta: {
@@ -387,6 +388,71 @@ var stats = { hp: 10, speed: 2, hp: 12 };   // hp is 12
   },
 };
 
+function declarationSite(file: GmlFile): string | undefined {
+  switch (file.kind) {
+    case "object-event":
+      return describeEvent(file);
+    case "room-creation":
+      return `the creation code of room ${code(file.resource)}`;
+    case "instance-creation": {
+      const instance = file.relPath.split("/").pop()!.replace(/^InstanceCreationCode_/, "").replace(/\.gml$/, "");
+      return `the creation code of instance ${code(instance)} in room ${code(file.resource)}`;
+    }
+    case "timeline-moment":
+      return `a moment of timeline ${code(file.resource)}`;
+    default:
+      return undefined;
+  }
+}
+
+export const declarationOutsideScript: Rule = {
+  meta: {
+    id: "gml/declaration-outside-script",
+    name: "DeclarationOutsideScript",
+    category: "maintainability",
+    severity: "warning",
+    precision: "very-high",
+    tier: "default",
+    short: "Enum, macro or globalvar declared in an object event or creation code instead of a script.",
+    full: "Enums, macros and globalvars are global no matter where they are written. Declared in an object event or a room or instance creation code, they are hard to find, and tools that only index scripts report every use as undeclared.",
+    help: `Enums, macros and \`globalvar\` declarations are global: GameMaker compiles them into the whole game no matter which file they're written in. Declaring one in an object event, a room's creation code, an instance's creation code or a timeline hides it:
+
+- readers look for shared declarations in scripts, not in the creation code of one room or the Create event of one object;
+- the location suggests it only applies to that room or object, but it doesn't;
+- editor tooling and language servers that only index scripts don't see the declaration, so they report every use of the enum or macro as undeclared.
+
+**How to fix:** move the declaration into a script, next to the functions that use it (or into a dedicated script such as \`scr_enums\`). This doesn't change behavior: enums and macros are resolved at compile time.
+
+Plain \`global.name = value\` assignments are **not** reported: creation code is a reasonable place to set up runtime state, and moving such an assignment to a script would change when it runs.
+
+\`\`\`gml
+// rooms/rm_title/RoomCreationCode.gml (bad)
+enum states { idle, walk, jump }
+#macro ANIMATION_END (image_index >= image_number - 1)
+
+// scripts/scr_states/scr_states.gml (good)
+enum states { idle, walk, jump }
+#macro ANIMATION_END (image_index >= image_number - 1)
+\`\`\``,
+  },
+  file(ctx) {
+    const site = declarationSite(ctx.file);
+    if (!site) return;
+    return {
+      EnumDeclaration(n) {
+        ctx.report(n.id, `Enum ${code(n.id.name)} is declared in ${site}. Enums are global; declare it in a script so it's easy to find.`);
+      },
+      MacroDeclaration(n) {
+        ctx.report(n.id, `Macro ${code(n.id.name)} is declared in ${site}. Macros are global; declare it in a script so it's easy to find.`);
+      },
+      VarDeclaration(n) {
+        if (n.kind !== "globalvar") return;
+        for (const d of n.declarations) ctx.report(d.id, `Global variable ${code(d.id.name)} is declared with \`globalvar\` in ${site}. Declare globals in a script, as \`global.${d.id.name}\`.`);
+      },
+    };
+  },
+};
+
 export const MAINTAINABILITY_RULES: Rule[] = [
   legacyEquality,
   globalvarDeclaration,
@@ -399,4 +465,5 @@ export const MAINTAINABILITY_RULES: Rule[] = [
   constantCondition,
   switchFallthrough,
   duplicateStructKey,
+  declarationOutsideScript,
 ];
