@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripTrailingCommas } from "../project/yy.ts";
+import { compileIgnoreLines, ignorePatternToRegExp, matcherFor } from "./ignore.ts";
 import type { Severity, Suite } from "./types.ts";
 
 export type ThreatModel = "remote" | "local";
@@ -176,29 +177,10 @@ export function resolveConfig(c: Config): ResolvedConfig {
   };
 }
 
-/** Converts a glob (`**`, `*`, `?`) to a regex over forward-slash paths. */
 export function globToRegExp(glob: string): RegExp {
-  let g = glob.replace(/\\/g, "/").replace(/^\.\//, "");
-  const anchored = g.startsWith("/");
-  if (anchored) g = g.slice(1);
-  let re = "";
-  for (let i = 0; i < g.length; i++) {
-    const c = g[i];
-    if (c === "*") {
-      if (g[i + 1] === "*") {
-        const slash = g[i + 2] === "/";
-        re += slash ? "(?:.*/)?" : ".*";
-        i += slash ? 2 : 1;
-      } else re += "[^/]*";
-    } else if (c === "?") re += "[^/]";
-    else re += /[.+^${}()|[\]\\]/.test(c) ? "\\" + c : c;
-  }
-  // A pattern without a slash matches at any depth (like .gitignore).
-  const prefix = anchored || g.includes("/") ? "^" : "^(?:.*/)?";
-  return new RegExp(`${prefix}${re}(?:/.*)?$`);
+  return ignorePatternToRegExp(glob.replace(/\/+$/, ""), /.\/+$/.test(glob));
 }
 
 export function makeIgnoreMatcher(globs: string[]): (relPath: string) => boolean {
-  const res = globs.map(globToRegExp);
-  return (p) => res.some((r) => r.test(p));
+  return matcherFor(compileIgnoreLines(globs));
 }

@@ -60,7 +60,7 @@ To put GML Code Scanner on your organization's **Actions → New workflow** page
 | `runtime` | from `.yyp` | Target GameMaker runtime, e.g. `2023.1.1.81`. |
 | `upload` | `auto` | Upload to code scanning: `auto` (warn if unavailable), `true` (fail if the upload fails), `false`. |
 | `token` | `github.token` | Token for the upload (needs `security-events: write`). |
-| `wait-for-processing` | `true` | Wait for GitHub to process the upload and report processing errors. |
+| `wait-for-processing` | `true` | Wait for GitHub to process the upload, report processing errors, and leave out findings whose alerts are dismissed. |
 | `sarif-file` | `gml-code-scanner.sarif` | Where to write the SARIF report (also usable as an artifact). |
 | `category` | `gml-code-scanner` | SARIF category, used to tell several analyses of the same commit apart (for example, several games in one repo). |
 | `fail-on` | `error` | Fail the step on findings at this level or above: `error`, `warning`, `note`, `none`. |
@@ -69,7 +69,7 @@ To put GML Code Scanner on your organization's **Actions → New workflow** page
 | `max-annotations` | `50` | Maximum annotations per run. |
 | `step-summary` | `true` | Write a findings table to the job summary. |
 
-**Outputs:** `sarif-file`, `sarif-id`, `findings`, `errors`, `warnings`, `notes` (on pull requests these count only findings within `pr-scope`), and `total-findings`.
+**Outputs:** `sarif-file`, `sarif-id`, `findings`, `errors`, `warnings`, `notes` (on pull requests these count only findings within `pr-scope`, and never findings with dismissed alerts), `total-findings`, and `dismissed`.
 
 ### Big repositories and private repositories
 
@@ -140,6 +140,29 @@ Create `.gmlscan.json` in your project folder (`npx github:Mackery6969/GML-Code-
 }
 ```
 
+### Ignoring files
+
+Put a `.gmlscanignore` file in the folder you scan, or in any folder above it up to the repository root. It works like `.gitignore`:
+
+```gitignore
+# third-party code
+scripts/vendor_*/
+extensions/
+
+# but keep checking this one
+!scripts/vendor_ourfork/
+
+# only at the top of the folder this file is in
+/datafiles/generated/
+```
+
+- A pattern without a `/` (apart from a trailing one) matches at any depth; one with a `/` is relative to the file's own folder.
+- A trailing `/` matches folders only. `*`, `?` and `**` work as in `.gitignore`.
+- `!` brings back something an earlier line ignored, and the last matching line wins.
+- Files further down override files further up, and the `"ignore"` list in `.gmlscan.json` is applied last.
+
+Findings in ignored files aren't reported, but files in a `.yyp` project are still read, so the functions and assets they define stay known and don't show up as undefined elsewhere.
+
 ### Suppressing findings
 
 ```gml
@@ -151,7 +174,9 @@ draw_text(x, y, text); // gmlscan-ignore-line
 // gmlscan-ignore-file gml/unused-object
 ```
 
-Leave out the rule ID to suppress every rule. On GitHub you can also dismiss an alert as "won't fix" or "false positive".
+Leave out the rule ID to suppress every rule.
+
+On GitHub you can also dismiss an alert in the Security tab as "won't fix" or "false positive". The dismissal sticks to the flagged line's text, so it survives code moving up or down and reformatting, but editing that line, or moving or renaming the file, raises a new alert. Once GitHub has processed the upload, the action leaves dismissed findings out of its annotations, job summary and `fail-on` check too. Comments work everywhere, including runs without code scanning, so prefer them for permanent exceptions.
 
 ### Custom rules
 

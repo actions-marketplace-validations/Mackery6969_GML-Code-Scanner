@@ -86,6 +86,8 @@ describe("other security rules", () => {
   it("hardcoded-secret in code", () => {
     assert.equal(findingsFor(eventCode(`hook = "${fake.discordWebhook}";`, "Create_0"), "gml/hardcoded-secret").length, 1);
     assert.match(findingsFor(eventCode(`key = "${fake.stripeKey}";`, "Create_0"), "gml/hardcoded-secret")[0]?.message ?? "", /Stripe/);
+    // Fake key used as test input for the hardcoded-secret rule; not a real credential.
+    // nosemgrep: generic.secrets.security.detected-generic-api-key.detected-generic-api-key
     assert.equal(findingsFor(eventCode(`api_key = "k3J9sd8f7G6h5J4k3L2m1N0pQ9r8S7t6";`, "Create_0"), "gml/hardcoded-secret").length, 1);
     assert.equal(findingsFor(eventCode(`api_key = "YOUR_API_KEY_HERE";`, "Create_0"), "gml/hardcoded-secret").length, 0);
     assert.equal(findingsFor(eventCode(`keyboard_key = "abcdefghijklmnop1234";`, "Create_0"), "gml/hardcoded-secret").length, 0);

@@ -2,6 +2,10 @@ name: Release
 
 # Push a tag like v1.2.3 (or v1.2.3-beta.1 for a pre-release) to publish a release.
 #
+# If package.json wasn't bumped to the tag's version first, this workflow bumps it in a commit
+# on top of the tagged commit, moves the tag there, and brings the default branch up to date
+# afterwards (directly if it can, otherwise through a pull request).
+#
 # dist/ is not committed on branches. This workflow builds it, commits it on top of the
 # tagged commit, and points the version tag (and the major tag, e.g. v1) at that commit,
 # so `uses: Mackery6969/GML-Code-Scanner@v1` always gets a bundled action.
@@ -13,6 +17,7 @@ on:
 
 permissions:
   contents: write # push the release commit/tags and create the release
+  pull-requests: write # open the version-bump pull request when the default branch can't be pushed to
 
 concurrency:
   group: release
@@ -33,14 +38,34 @@ jobs:
 
       - run: npm ci
 
-      - name: Check the tag matches package.json
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump package.json to match the tag
+        id: version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
           PKG_VERSION="$(node -p "require('./package.json').version")"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION. Bump the version, commit, then tag."
+          echo "tag-version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$TAG_VERSION" = "$PKG_VERSION" ]; then
+            echo "package.json is already at $PKG_VERSION."
+            exit 0
+          fi
+          if [ "$(node scripts/compare-versions.ts "$PKG_VERSION" "$TAG_VERSION")" != "-1" ]; then
+            echo "::error::package.json is at $PKG_VERSION, which is not older than tag $GITHUB_REF_NAME. Delete the tag and tag a newer version."
             exit 1
           fi
+          echo "from-version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tagged-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          npm version "$TAG_VERSION" --no-git-tag-version   # updates package.json and package-lock.json
+          git add package.json package-lock.json
+          git commit -m "chore(release): bump version to $TAG_VERSION"
+          echo "bump-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git tag -f "$GITHUB_REF_NAME"
+          git push -f origin "refs/tags/$GITHUB_REF_NAME"
+          echo "::notice::package.json was at $PKG_VERSION, so it was bumped to $TAG_VERSION and $GITHUB_REF_NAME was moved to $(git rev-parse --short HEAD)."
 
       - run: npm run typecheck
       - run: npm test
@@ -56,8 +81,6 @@ jobs:
 
       - name: Commit the bundle and point the tags at it
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout --detach   # the release commit must not land on any branch
           git add --force dist
           git commit --allow-empty -m "Release $GITHUB_REF_NAME (bundled dist/)"
@@ -93,6 +116,53 @@ jobs:
               $FLAGS \
               "gmlscan.mjs#gmlscan.mjs (standalone CLI: node gmlscan.mjs <path>)"
           fi
+
+      # The tag got the version bump above; the default branch needs it too, or the next release
+      # starts from the old version again. Branch rules usually stop this token from pushing there,
+      # so fall back to a pull request.
+      - name: Put the version bump on the default branch
+        if: steps.version.outputs.bump-sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+          FROM_VERSION: ${{ steps.version.outputs.from-version }}
+          TAG_VERSION: ${{ steps.version.outputs.tag-version }}
+          TAGGED_SHA: ${{ steps.version.outputs.tagged-sha }}
+          BUMP_SHA: ${{ steps.version.outputs.bump-sha }}
+        run: |
+          TITLE="chore(release): bump version to $TAG_VERSION"
+          git fetch origin "$BRANCH"
+          BRANCH_SHA="$(git rev-parse FETCH_HEAD)"
+          BRANCH_VERSION="$(git show "$BRANCH_SHA:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+          if [ "$(node scripts/compare-versions.ts "$BRANCH_VERSION" "$TAG_VERSION")" != "-1" ]; then
+            echo "$BRANCH is already at $BRANCH_VERSION."
+            exit 0
+          fi
+          if [ "$BRANCH_SHA" = "$TAGGED_SHA" ]; then
+            if git push origin "$BUMP_SHA:refs/heads/$BRANCH"; then
+              echo "Pushed the version bump to $BRANCH."
+              exit 0
+            fi
+            echo "Can't push to $BRANCH directly; opening a pull request instead."
+            PR_SHA="$BUMP_SHA"
+          else
+            # $BRANCH has moved on since the tagged commit, so bump on top of its tip instead.
+            git switch --detach "$BRANCH_SHA"
+            npm version "$TAG_VERSION" --no-git-tag-version
+            git add package.json package-lock.json
+            git commit -m "$TITLE"
+            PR_SHA="$(git rev-parse HEAD)"
+          fi
+          PR_BRANCH="release/bump-$GITHUB_REF_NAME"
+          git push -f origin "$PR_SHA:refs/heads/$PR_BRANCH"
+          {
+            echo "Tag \`$GITHUB_REF_NAME\` was pushed while package.json was still at \`$FROM_VERSION\`. The release workflow"
+            echo "bumped the version on the tag; this brings \`$BRANCH\` up to date so the next release starts from \`$TAG_VERSION\`."
+            echo ""
+            echo "Opened by the release workflow, so CI does not run on it. It only changes the version in package.json and package-lock.json."
+          } > "$RUNNER_TEMP/pr-body.md"
+          URL="$(gh pr create --base "$BRANCH" --head "$PR_BRANCH" --title "$TITLE" --body-file "$RUNNER_TEMP/pr-body.md")"
+          echo "::notice::Opened $URL to bump $BRANCH to $TAG_VERSION."
 
       - name: Marketplace reminder
         run: |

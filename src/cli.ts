@@ -39,6 +39,7 @@ Other:
   -h, --help                Show this help
 
 Suppress a finding with a comment:  // gmlscan-ignore-next-line gml/rule-id
+Skip files with a .gmlscanignore file (same syntax as .gitignore).
 Docs: ${REPOSITORY_URL}
 `;
 

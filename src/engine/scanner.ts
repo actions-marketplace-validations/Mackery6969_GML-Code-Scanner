@@ -7,7 +7,8 @@ import { KNOWN_RUNTIMES } from "../semantic/builtins.ts";
 import { ProjectIndex } from "../semantic/project-index.ts";
 import { ALL_RULES, SYNTAX_ERROR_RULE } from "../rules/index.ts";
 import { createPatternRules } from "../rules/patterns.ts";
-import { loadConfig, makeIgnoreMatcher, type ResolvedConfig, type ThreatModel } from "./config.ts";
+import { loadConfig, type ResolvedConfig, type ThreatModel } from "./config.ts";
+import { loadIgnoreMatcher } from "./ignore.ts";
 import { Suppressions } from "./suppress.ts";
 import type { FileContext, Finding, ProjectContext, ReportExtras, Rule, RuleMeta, Severity, SourceLocation, Span, Suite } from "./types.ts";
 
@@ -100,7 +101,7 @@ export function scan(options: ScanOptions): ScanResult {
   const rules = [...ALL_RULES, SYNTAX_ERROR_RULE, ...createPatternRules(config.patterns)];
   const selected = selectRules(config, rules, options.onlyRules);
   const severityOf = new Map(selected.map((s) => [s.rule.meta.id, s.severity]));
-  const isIgnored = makeIgnoreMatcher(config.ignore);
+  const isIgnored = loadIgnoreMatcher(root, config.ignore);
   const workspace = loadWorkspace(root, { isIgnored });
 
   const findings: Finding[] = [];

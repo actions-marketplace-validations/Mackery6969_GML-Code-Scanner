@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { ConfigError, type ThreatModel } from "./engine/config.ts";
 import { exceedsThreshold, scan } from "./engine/scanner.ts";
 import type { Suite } from "./engine/types.ts";
+import { fetchDismissedAlerts, splitDismissed } from "./github/dismissed.ts";
 import { fetchPullRequestChanges, inScope, type PrScope } from "./github/pr-scope.ts";
 import { UploadError, uploadSarif } from "./github/upload.ts";
 import { formatAnnotations, formatStepSummary } from "./report/github.ts";
@@ -20,6 +21,12 @@ function input(name: string, fallback = ""): string {
   const v = process.env[`INPUT_${name.replace(/ /g, "_").toUpperCase()}`];
   return v === undefined || v.trim() === "" ? fallback : v.trim();
 }
+
+const githubToken = () => input("token") || process.env.GITHUB_TOKEN || "";
+
+const githubApiUrl = () => process.env.GITHUB_API_URL ?? "https://api.github.com";
+
+const toPosix = (path: string) => path.split(sep).join("/");
 
 function setOutput(name: string, value: string | number): void {
   const file = process.env.GITHUB_OUTPUT;
@@ -69,6 +76,7 @@ async function run(): Promise<void> {
     .filter(Boolean) as ThreatModel[];
   const sarifFile = resolve(workspace, input("sarif-file", "gml-code-scanner.sarif"));
   const configInput = input("config");
+  const category = input("category", "gml-code-scanner");
 
   if (!["error", "warning", "note", "none"].includes(failOn)) return fail(`Input fail-on must be error, warning, note or none (got "${failOn}")`);
   if (suite && !["default", "security-extended", "security-and-quality", "all"].includes(suite)) return fail(`Input suite must be default, security-extended, security-and-quality or all (got "${suite}")`);
@@ -93,7 +101,7 @@ async function run(): Promise<void> {
   }
   if (result.projects.length === 0) warn(`No GameMaker project (.yyp) or .gml files found under ${relative(workspace, root) || "."}. Set the "path" input to your project folder.`);
 
-  const toRepoPath = (file: string) => relative(workspace, join(root, file)).split(sep).join("/");
+  const toRepoPath = (file: string) => toPosix(relative(workspace, join(root, file)));
 
   // File names and code from the scanned repo are printed below; pause workflow-command
   // processing so a file named "::error::..." can't inject annotations or commands.
@@ -110,7 +118,7 @@ async function run(): Promise<void> {
     informationUri: REPOSITORY_URL,
     scanRoot: root,
     uriBase: workspace,
-    category: input("category", "gml-code-scanner"),
+    category,
   });
   mkdirSync(dirname(sarifFile), { recursive: true });
   writeFileSync(sarifFile, JSON.stringify(sarif, null, 2));
@@ -118,39 +126,38 @@ async function run(): Promise<void> {
 
   // On pull requests, report only what the pull request changed; the SARIF keeps everything.
   let reported = result.findings;
-  let scopeNote = "";
+  let scoped = false;
+  const scopeNote = () =>
+    `Showing ${reported.length} finding${reported.length === 1 ? "" : "s"} on ${prScope === "changed-lines" ? "lines" : "files"} changed by this pull request. The whole project has ${result.findings.length}; all of them are in the SARIF file.`;
   const pull = pullRequestNumber();
   if (pull !== undefined && prScope !== "all") {
     try {
       const changes = await fetchPullRequestChanges({
-        token: input("token") || process.env.GITHUB_TOKEN || "",
-        apiUrl: process.env.GITHUB_API_URL ?? "https://api.github.com",
+        token: githubToken(),
+        apiUrl: githubApiUrl(),
         repository: process.env.GITHUB_REPOSITORY ?? "",
         pull,
       });
       reported = result.findings.filter((f) => inScope(f, changes, toRepoPath, prScope));
-      scopeNote = `Showing ${reported.length} finding${reported.length === 1 ? "" : "s"} on ${prScope === "changed-lines" ? "lines" : "files"} changed by this pull request. The whole project has ${result.findings.length}; all of them are in the SARIF file.`;
-      log(scopeNote);
+      scoped = true;
+      log(scopeNote());
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       warn(`Could not limit results to this pull request's changes (${msg.replace(/.$/, "")}). Reporting all findings instead.`);
     }
   }
 
-  if (input("annotations", "true") === "true") {
-    const max = Number(input("max-annotations", "50")) || 50;
-    const annotations = formatAnnotations(reported, toRepoPath, max);
-    if (annotations) log(annotations);
-  }
-
   // Upload to code scanning, like CodeQL's analyze step.
   let uploadNote = "";
+  let dismissedNote = "";
+  let dismissedCount = 0;
   if (upload !== "false" && upload !== "never") {
-    const token = input("token") || process.env.GITHUB_TOKEN || "";
+    const token = githubToken();
     const repository = process.env.GITHUB_REPOSITORY;
     const sha = process.env.GITHUB_SHA;
     const ref = process.env.GITHUB_REF;
     const required = upload === "true" || upload === "always";
+    let processed = false;
     if (!token || !repository || !sha || !ref) {
       const msg = "Skipping the code scanning upload: not running in GitHub Actions (or no token).";
       if (required) fail(msg);
@@ -159,7 +166,7 @@ async function run(): Promise<void> {
       try {
         const res = await uploadSarif(sarif, {
           token,
-          apiUrl: process.env.GITHUB_API_URL ?? "https://api.github.com",
+          apiUrl: githubApiUrl(),
           repository,
           sha,
           ref,
@@ -173,6 +180,9 @@ async function run(): Promise<void> {
         else if (res.status === "complete") {
           log("Code scanning processed the results.");
           uploadNote = `Results are in the repository's **Security → Code scanning** tab.`;
+          processed = true;
+        } else if (reported.length) {
+          log("Code scanning hasn't processed the results yet, so findings with dismissed alerts are reported too.");
         }
       } catch (e) {
         const err = e instanceof UploadError ? e : new UploadError(String(e), 0, false);
@@ -185,21 +195,46 @@ async function run(): Promise<void> {
         else if (err.unavailable) notice(`Code scanning isn't available for this run, so results are shown as annotations and in the job summary instead (${err.message.replace(/^GitHub rejected the SARIF upload /, "")}). Set upload: false to skip the upload.`);
         else warn(err.message + hint);
       }
+
+      // A dismissed alert stays dismissed until its line changes, so don't annotate or fail on it either.
+      if (processed && reported.length) {
+        try {
+          const alerts = await fetchDismissedAlerts({ token, apiUrl: githubApiUrl(), repository, ref, sha, toolName: TOOL_NAME, category });
+          const { open, dismissed } = splitDismissed(reported, alerts, toRepoPath);
+          if (dismissed.length) {
+            reported = open;
+            dismissedCount = dismissed.length;
+            dismissedNote = dismissed.length === 1 ? "Left out 1 finding whose alert is dismissed in code scanning." : `Left out ${dismissed.length} findings whose alerts are dismissed in code scanning.`;
+            log(dismissedNote);
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          warn(`${msg} Findings with dismissed alerts are reported too.`);
+        }
+      }
     }
+  }
+
+  if (input("annotations", "true") === "true") {
+    const max = Number(input("max-annotations", "50")) || 50;
+    const annotations = formatAnnotations(reported, toRepoPath, max);
+    if (annotations) log(annotations);
   }
 
   if (input("step-summary", "true") === "true" && process.env.GITHUB_STEP_SUMMARY) {
     let summary = formatStepSummary({ ...result, findings: reported }, toRepoPath, { serverUrl: process.env.GITHUB_SERVER_URL, repository: process.env.GITHUB_REPOSITORY, sha: process.env.GITHUB_SHA });
-    if (scopeNote) summary = summary.replace("## GML Code Scanner\n\n", `## GML Code Scanner\n\n> ${scopeNote}\n\n`);
+    const notes = [scoped ? scopeNote() : "", dismissedNote].filter(Boolean);
+    if (notes.length) summary = summary.replace("## GML Code Scanner\n\n", `## GML Code Scanner\n\n${notes.map((n) => `> ${n}`).join("\n>\n")}\n\n`);
     if (uploadNote) summary += `\n${uploadNote}\n`;
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
   }
 
   const counts = { error: 0, warning: 0, note: 0 };
   for (const f of reported) counts[f.severity]++;
-  setOutput("sarif-file", relative(workspace, sarifFile).split(sep).join("/"));
+  setOutput("sarif-file", toPosix(relative(workspace, sarifFile)));
   setOutput("findings", reported.length);
   setOutput("total-findings", result.findings.length);
+  setOutput("dismissed", dismissedCount);
   setOutput("errors", counts.error);
   setOutput("warnings", counts.warning);
   setOutput("notes", counts.note);

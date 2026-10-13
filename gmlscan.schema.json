@@ -26,7 +26,7 @@
       }
     },
     "ignore": {
-      "description": "Glob patterns (relative to the scanned folder) whose findings are not reported, e.g. \"extensions/**\". Files in a .yyp project are still read, so functions and assets defined there stay known.",
+      "description": "Patterns in .gitignore syntax (relative to the scanned folder) whose findings are not reported, e.g. \"extensions/**\" or \"scripts/vendor_*/\". A leading ! brings back something an earlier pattern ignored. Applied after any .gmlscanignore files. Files in a .yyp project are still read, so functions and assets defined there stay known.",
       "type": "array",
       "items": { "type": "string" }
     },

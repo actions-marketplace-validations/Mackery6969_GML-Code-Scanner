@@ -36,6 +36,8 @@ interface RuntimeData {
 }
 
 function attr(tag: string, name: string): string | undefined {
+  // Safe: every caller passes a hardcoded attribute name literal; this is an offline dev script.
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
   const m = new RegExp(`\\b${name}="([^"]*)"`).exec(tag);
   return m ? decodeXml(m[1]) : undefined;
 }

@@ -25,7 +25,7 @@ inputs:
     description: "Token for the code scanning upload. Needs the security-events: write permission."
     default: ${{ github.token }}
   wait-for-processing:
-    description: "Wait until GitHub has processed the upload, to report processing errors."
+    description: "Wait until GitHub has processed the upload, to report processing errors and leave out findings whose alerts are dismissed in code scanning."
     default: "true"
   sarif-file:
     description: "Where to write the SARIF report, relative to the workspace."
@@ -55,9 +55,11 @@ outputs:
   sarif-id:
     description: "Code scanning upload id, when results were uploaded."
   findings:
-    description: "Number of reported findings (on pull requests, only those within pr-scope)."
+    description: "Number of reported findings (on pull requests, only those within pr-scope). Findings whose alerts are dismissed in code scanning aren't counted."
   total-findings:
     description: "Number of findings in the whole project."
+  dismissed:
+    description: "Number of findings left out because their alerts are dismissed in code scanning."
   errors:
     description: "Number of reported error-level findings."
   warnings:
