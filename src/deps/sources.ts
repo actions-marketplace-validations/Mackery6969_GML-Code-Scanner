@@ -50,9 +50,10 @@ export class SourceError extends Error {}
 const GITHUB_API = "https://api.github.com";
 const CODEBERG_API = "https://codeberg.org/api/v1";
 const USER_AGENT = "gml-code-scanner";
+const REQUEST_TIMEOUT_MS = 20_000;
 
 async function getJson(url: string, http: HttpOptions, headers: Record<string, string> = {}): Promise<unknown> {
-  const res = await http.fetch(url, { headers: { Accept: "application/json", "User-Agent": USER_AGENT, ...headers }, signal: AbortSignal.timeout(20_000) });
+  const res = await http.fetch(url, { headers: { Accept: "application/json", "User-Agent": USER_AGENT, ...headers }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   if (res.status === 404) return undefined;
   if (!res.ok) {
     if ((res.status === 403 || res.status === 429) && res.headers.get("x-ratelimit-remaining") === "0") {
@@ -148,7 +149,7 @@ export function parseMarketplacePage(html: string, assetUrl: string): Release[] 
 
 async function marketplaceReleases(id: number, http: HttpOptions): Promise<Release[]> {
   const url = `https://marketplace.gamemaker.io/assets/${id}`;
-  const res = await http.fetch(url, { headers: { "User-Agent": USER_AGENT, Accept: "text/html" }, signal: AbortSignal.timeout(20_000) });
+  const res = await http.fetch(url, { headers: { "User-Agent": USER_AGENT, Accept: "text/html" }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   if (!res.ok) throw new SourceError(`HTTP ${res.status} from ${url}`);
   const releases = parseMarketplacePage(await res.text(), res.url || url);
   if (releases.length === 0) throw new SourceError(`no versions found on ${url}`);
@@ -204,7 +205,7 @@ export async function fetchRuntimeVersions(http: HttpOptions): Promise<string[]>
   const versions = new Set<string>();
   const results = await Promise.allSettled(
     RUNTIME_FEEDS.map(async (url) => {
-      const res = await http.fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(20_000) });
+      const res = await http.fetch(url, { headers: { "User-Agent": USER_AGENT }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       if (!res.ok) throw new SourceError(`HTTP ${res.status} from ${url}`);
       for (const v of parseRuntimeFeed(await res.text())) versions.add(v);
     }),

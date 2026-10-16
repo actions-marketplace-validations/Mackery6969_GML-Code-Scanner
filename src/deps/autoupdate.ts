@@ -126,6 +126,9 @@ export function branchName(dep: DetectedDependency, version: string): string {
   return branchPrefix(dep) + cleanRef(version);
 }
 
+/** A branch name as it appears in a ref URL: each segment encoded, slashes kept. */
+const encodeRefPath = (branch: string) => branch.split("/").map(encodeURIComponent).join("/");
+
 const gitBlobSha = (content: Buffer) => createHash("sha1").update(`blob ${content.length}\0`).update(content).digest("hex");
 
 /** A path inside the package that is safe to write below the extension folder. */
@@ -414,7 +417,7 @@ export async function openUpdatePullRequests(reports: DependencyReport[], option
           body: pullRequestBody({ options, report, plan, changes, emptied, repoPath, branch }),
         });
       } catch (e) {
-        await call("DELETE", `/repos/${options.repository}/git/refs/heads/${branch.split("/").map(encodeURIComponent).join("/")}`).catch(() => undefined);
+        await call("DELETE", `/repos/${options.repository}/git/refs/heads/${encodeRefPath(branch)}`).catch(() => undefined);
         throw e;
       }
       await call("POST", `/repos/${options.repository}/issues/${pr.number}/labels`, { labels: ["dependencies"] }).catch(() => undefined);
@@ -429,7 +432,7 @@ export async function openUpdatePullRequests(reports: DependencyReport[], option
         if (old.number === pr.number || !/^\d/.test(oldVersion) || compareVersions(oldVersion, u.release.version) >= 0) continue;
         await call("POST", `/repos/${options.repository}/issues/${old.number}/comments`, { body: `Superseded by #${pr.number}.` }).catch(() => undefined);
         await call("PATCH", `/repos/${options.repository}/pulls/${old.number}`, { state: "closed" }).catch(() => undefined);
-        await call("DELETE", `/repos/${options.repository}/git/refs/heads/${old.head.ref.split("/").map(encodeURIComponent).join("/")}`).catch(() => undefined);
+        await call("DELETE", `/repos/${options.repository}/git/refs/heads/${encodeRefPath(old.head.ref)}`).catch(() => undefined);
       }
     } catch (e) {
       if (e instanceof GitHubApiError && (e.status === 403 || e.status === 401)) {

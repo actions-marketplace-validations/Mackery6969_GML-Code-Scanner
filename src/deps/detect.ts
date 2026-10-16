@@ -89,11 +89,7 @@ export function detectRuntime(project: Project, configured?: string): RuntimeTar
 
 /** All dependencies of one project. `specs` is checked in order, so earlier entries (the config's) win. */
 export function detectDependencies(project: Project, specs: DependencySpec[]): DetectedDependency[] {
-  const out: DetectedDependency[] = [];
-  out.push(...detectExtensions(project, specs));
-  out.push(...detectLibraries(project, specs));
-  out.push(...detectGenerated(project, specs));
-  return out;
+  return [...detectExtensions(project, specs), ...detectLibraries(project, specs), ...detectGenerated(project, specs)];
 }
 
 function detectExtensions(project: Project, specs: DependencySpec[]): DetectedDependency[] {

@@ -55,6 +55,11 @@ Skip files with a .gmlscanignore file (same syntax as .gitignore).
 Docs: ${REPOSITORY_URL}
 `;
 
+function writeOutputFile(file: string, content: string): void {
+  mkdirSync(dirname(resolve(file)), { recursive: true });
+  writeFileSync(file, content);
+}
+
 function listRules(format: string): string {
   const rules = [...ALL_RULES, SYNTAX_ERROR_RULE, ...DEPENDENCY_RULES].map((r) => r.meta);
   if (format === "json") return JSON.stringify(rules, null, 2) + "\n";
@@ -183,10 +188,8 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (o["list-rules"]) {
     const text = listRules(o.format ?? "text");
-    if (o.output) {
-      mkdirSync(dirname(resolve(o.output)), { recursive: true });
-      writeFileSync(o.output, text);
-    } else process.stdout.write(text);
+    if (o.output) writeOutputFile(o.output, text);
+    else process.stdout.write(text);
     return 0;
   }
   const root = resolve(args.positionals[0] ?? ".");
@@ -272,16 +275,12 @@ export async function main(argv: string[]): Promise<number> {
   else report = formatText(result, { color: !o["no-color"] && !o.output && process.stdout.isTTY === true && !process.env.NO_COLOR, showPaths: o.paths, updates });
 
   if (o.output) {
-    mkdirSync(dirname(resolve(o.output)), { recursive: true });
-    writeFileSync(o.output, report);
+    writeOutputFile(o.output, report);
     process.stderr.write(`Wrote ${result.findings.length} findings to ${o.output}\n`);
   } else {
     process.stdout.write(report);
   }
-  if (o.sarif) {
-    mkdirSync(dirname(resolve(o.sarif)), { recursive: true });
-    writeFileSync(o.sarif, sarifOf());
-  }
+  if (o.sarif) writeOutputFile(o.sarif, sarifOf());
   return exceedsThreshold(result, failOn) ? 1 : 0;
 }
 
