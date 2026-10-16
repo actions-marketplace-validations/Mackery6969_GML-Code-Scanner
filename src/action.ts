@@ -6,15 +6,19 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { openUpdatePullRequests, updatableExtensions, type AutoUpdateResult } from "./deps/autoupdate.ts";
+import { checkUpdates, mergeUpdateFindings, type UpdateCheckResult } from "./deps/updates.ts";
 import { ConfigError, type ThreatModel } from "./engine/config.ts";
 import { exceedsThreshold, scan } from "./engine/scanner.ts";
-import type { Suite } from "./engine/types.ts";
+import type { Finding, Suite } from "./engine/types.ts";
 import { fetchDismissedAlerts, splitDismissed } from "./github/dismissed.ts";
 import { fetchPullRequestChanges, inScope, type PrScope } from "./github/pr-scope.ts";
 import { UploadError, uploadSarif } from "./github/upload.ts";
+import { formatDependencySummary } from "./report/dependencies.ts";
 import { formatAnnotations, formatStepSummary } from "./report/github.ts";
 import { toSarif } from "./report/sarif.ts";
 import { formatText } from "./report/text.ts";
+import { loadRuntimeSpec, RuntimeSpecError, type RuntimeSpec } from "./semantic/runtime-spec.ts";
 import { REPOSITORY_URL, TOOL_NAME, VERSION } from "./version.ts";
 
 function input(name: string, fallback = ""): string {
@@ -47,16 +51,49 @@ function notice(message: string): void {
   process.stdout.write(`::notice::${escapeData(message)}\n`);
 }
 
+interface EventPayload {
+  pull_request?: { number?: number };
+  repository?: { default_branch?: string };
+}
+
+function eventPayload(): EventPayload {
+  const path = process.env.GITHUB_EVENT_PATH;
+  if (!path) return {};
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as EventPayload;
+  } catch {
+    return {};
+  }
+}
+
 /** The pull request number when running on a pull_request(_target) event. */
 function pullRequestNumber(): number | undefined {
-  const path = process.env.GITHUB_EVENT_PATH;
-  if (!path) return undefined;
-  try {
-    const event = JSON.parse(readFileSync(path, "utf8")) as { pull_request?: { number?: number } };
-    return typeof event.pull_request?.number === "number" ? event.pull_request.number : undefined;
-  } catch {
-    return undefined;
+  const n = eventPayload().pull_request?.number;
+  return typeof n === "number" ? n : undefined;
+}
+
+/** "true" / "false" input, or undefined when unset (so the config file decides). */
+function booleanInput(name: string): boolean | undefined {
+  const v = input(name);
+  return v === "" ? undefined : v === "true";
+}
+
+/**
+ * The branch update pull requests should target, when this run is on the default branch
+ * (push, schedule or manual run), like Dependabot. Never on pull requests.
+ */
+async function autoUpdateBase(token: string, repository: string): Promise<string | undefined> {
+  if (!["push", "schedule", "workflow_dispatch"].includes(process.env.GITHUB_EVENT_NAME ?? "")) return undefined;
+  let branch = eventPayload().repository?.default_branch;
+  if (!branch) {
+    try {
+      const res = await fetch(`${githubApiUrl()}/repos/${repository}`, { headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "User-Agent": "gml-code-scanner" } });
+      if (res.ok) branch = ((await res.json()) as { default_branch?: string }).default_branch;
+    } catch {
+      // Unknown default branch: don't open pull requests.
+    }
   }
+  return branch && process.env.GITHUB_REF === `refs/heads/${branch}` ? branch : undefined;
 }
 
 function fail(message: string): void {
@@ -84,8 +121,25 @@ async function run(): Promise<void> {
   if (!["auto", "true", "false", "always", "never"].includes(upload)) return fail(`Input upload must be auto, true or false (got "${upload}")`);
   const prScope = input("pr-scope", "changed-lines") as PrScope;
   if (!["changed-lines", "changed-files", "all"].includes(prScope)) return fail(`Input pr-scope must be changed-lines, changed-files or all (got "${prScope}")`);
+  for (const name of ["check-updates", "runtime-updates", "auto-update"]) {
+    if (!["", "true", "false"].includes(input(name))) return fail(`Input ${name} must be true or false (got "${input(name)}")`);
+  }
 
   log(`${TOOL_NAME} ${VERSION}: scanning ${relative(workspace, root) || "."}`);
+
+  // An installed runtime (such as bscotch/igor-setup's runtime-dir output) gives exact availability checks.
+  let runtimeSpec: RuntimeSpec | undefined;
+  const runtimeDir = input("runtime-dir");
+  if (runtimeDir) {
+    try {
+      runtimeSpec = loadRuntimeSpec(resolve(workspace, runtimeDir));
+      log(`Checking against GameMaker runtime ${runtimeSpec.version} (${runtimeSpec.functions.size} functions) from ${toPosix(relative(workspace, runtimeSpec.dir)) || "."}.`);
+    } catch (e) {
+      if (!(e instanceof RuntimeSpecError)) throw e;
+      warn(`${e.message} Using the bundled runtime data instead.`);
+    }
+  }
+
   let result;
   try {
     result = scan({
@@ -93,13 +147,34 @@ async function run(): Promise<void> {
       configPath: configInput ? resolve(workspace, configInput) : undefined,
       suite: suite || undefined,
       runtime: input("runtime") || undefined,
+      runtimeSpec,
       threatModels: threatModels.length ? threatModels : undefined,
     });
   } catch (e) {
     if (e instanceof ConfigError) return fail(e.message);
     throw e;
   }
+  if (runtimeSpec && result.projects.length > 0 && !result.projects.some((p) => p.runtimeData === runtimeSpec?.version)) {
+    const line = runtimeSpec.version.split(".").slice(0, 2).join(".");
+    warn(`No project targets the ${line} release line, so the runtime in runtime-dir (${runtimeSpec.version}) wasn't used. Set runtime: ${runtimeSpec.version} to check against it anyway.`);
+  }
   if (result.projects.length === 0) warn(`No GameMaker project (.yyp) or .gml files found under ${relative(workspace, root) || "."}. Set the "path" input to your project folder.`);
+
+  // Dependency updates need the network, so they're checked after the (offline) scan.
+  const dependencies = result.config.dependencies;
+  const runtimeUpdates = booleanInput("runtime-updates") ?? dependencies.runtimeUpdates;
+  let updates: UpdateCheckResult | undefined;
+  if ((booleanInput("check-updates") ?? dependencies.checkUpdates ?? true) && (result.dependencies.length > 0 || (runtimeUpdates && result.runtimes.length > 0))) {
+    try {
+      // The workflow token belongs to this GitHub instance; release lookups go to github.com.
+      const releaseToken = githubApiUrl() === "https://api.github.com" ? githubToken() || undefined : undefined;
+      updates = await checkUpdates(result, { http: { fetch, githubToken: releaseToken }, runtimeUpdates });
+      mergeUpdateFindings(result, updates);
+      for (const e of updates.errors) warn(`Couldn't check for updates of ${e}`);
+    } catch (e) {
+      warn(`The dependency update check failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
 
   const toRepoPath = (file: string) => toPosix(relative(workspace, join(root, file)));
 
@@ -108,7 +183,7 @@ async function run(): Promise<void> {
   const resumeToken = randomUUID().replace(/-/g, "");
   log(`::group::Findings (${result.findings.length})`);
   log(`::stop-commands::${resumeToken}`);
-  process.stdout.write(formatText(result, { color: true, showPaths: true }));
+  process.stdout.write(formatText(result, { color: true, showPaths: true, updates }));
   log(`::${resumeToken}::`);
   log("::endgroup::");
 
@@ -151,6 +226,7 @@ async function run(): Promise<void> {
   let uploadNote = "";
   let dismissedNote = "";
   let dismissedCount = 0;
+  let dismissedFindings: Finding[] = [];
   if (upload !== "false" && upload !== "never") {
     const token = githubToken();
     const repository = process.env.GITHUB_REPOSITORY;
@@ -203,6 +279,7 @@ async function run(): Promise<void> {
           const { open, dismissed } = splitDismissed(reported, alerts, toRepoPath);
           if (dismissed.length) {
             reported = open;
+            dismissedFindings = dismissed;
             dismissedCount = dismissed.length;
             dismissedNote = dismissed.length === 1 ? "Left out 1 finding whose alert is dismissed in code scanning." : `Left out ${dismissed.length} findings whose alerts are dismissed in code scanning.`;
             log(dismissedNote);
@@ -221,10 +298,42 @@ async function run(): Promise<void> {
     if (annotations) log(annotations);
   }
 
+  // Dependabot-style pull requests for extension updates.
+  let autoUpdate: AutoUpdateResult | undefined;
+  const repository = process.env.GITHUB_REPOSITORY ?? "";
+  if (updates && (booleanInput("auto-update") ?? dependencies.autoUpdate)) {
+    // An update whose alert was dismissed in code scanning doesn't get a pull request either.
+    const dismissedAt = new Set(dismissedFindings.filter((f) => f.ruleId === "gml/outdated-dependency").map((f) => `${f.location.file}:${f.location.startLine}`));
+    const wanted = updates.reports.filter((r) => !dismissedAt.has(`${r.dependency.location.file}:${r.dependency.location.startLine}`));
+    const token = githubToken();
+    if (updatableExtensions(wanted).length && token && repository) {
+      const base = await autoUpdateBase(token, repository);
+      if (base) {
+        autoUpdate = await openUpdatePullRequests(wanted, {
+          token,
+          apiUrl: githubApiUrl(),
+          serverUrl: process.env.GITHUB_SERVER_URL ?? "https://github.com",
+          repository,
+          baseBranch: base,
+          workspaceRoot: workspace,
+          scanRoot: root,
+          http: { fetch },
+          log,
+          toolUrl: REPOSITORY_URL,
+        });
+        if (autoUpdate.blocked) notice(`Extension updates are available, but no pull requests were opened: ${autoUpdate.blocked}`);
+      }
+    }
+  }
+
   if (input("step-summary", "true") === "true" && process.env.GITHUB_STEP_SUMMARY) {
     let summary = formatStepSummary({ ...result, findings: reported }, toRepoPath, { serverUrl: process.env.GITHUB_SERVER_URL, repository: process.env.GITHUB_REPOSITORY, sha: process.env.GITHUB_SHA });
     const notes = [scoped ? scopeNote() : "", dismissedNote].filter(Boolean);
     if (notes.length) summary = summary.replace("## GML Code Scanner\n\n", `## GML Code Scanner\n\n${notes.map((n) => `> ${n}`).join("\n>\n")}\n\n`);
+    if (updates) {
+      const deps = formatDependencySummary(updates, autoUpdate);
+      if (deps) summary += `\n${deps}`;
+    }
     if (uploadNote) summary += `\n${uploadNote}\n`;
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
   }
@@ -238,6 +347,8 @@ async function run(): Promise<void> {
   setOutput("errors", counts.error);
   setOutput("warnings", counts.warning);
   setOutput("notes", counts.note);
+  setOutput("outdated-dependencies", updates?.reports.filter((r) => r.status === "outdated").length ?? 0);
+  setOutput("update-pull-requests", autoUpdate?.opened.map((p) => p.url).join(" ") ?? "");
 
   if (exceedsThreshold({ ...result, findings: reported }, failOn)) {
     fail(`GML Code Scanner found problems at or above "${failOn}" severity (${counts.error} errors, ${counts.warning} warnings, ${counts.note} notes). Set fail-on: none to report without failing.`);

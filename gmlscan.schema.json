@@ -102,6 +102,67 @@
           "category": { "enum": ["security", "correctness", "performance", "maintainability"] }
         }
       }
+    },
+    "dependencies": {
+      "description": "Update checks for extensions and libraries copied into the project.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkUpdates": {
+          "description": "Look for newer versions that support the project's GameMaker version (needs network access). The GitHub Action checks by default; the command line only with --check-updates or when this is true.",
+          "type": "boolean"
+        },
+        "runtimeUpdates": {
+          "description": "Also report newer GameMaker runtimes, and dependency updates that need one.",
+          "type": "boolean",
+          "default": false
+        },
+        "autoUpdate": {
+          "description": "GitHub Action: open pull requests that update extensions, on runs on the default branch. Needs contents: write and pull-requests: write.",
+          "type": "boolean",
+          "default": true
+        },
+        "ignore": {
+          "description": "Dependencies, versions or kinds of update not to report or open pull requests for.",
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "string", "description": "Dependency name, extension name or version-macro stem." },
+              {
+                "type": "object",
+                "required": ["name"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": { "type": "string" },
+                  "versions": { "type": "array", "items": { "type": "string" }, "description": "Versions to skip: \"3.x\", \"2.1.*\" or exact versions." },
+                  "updateTypes": { "type": "array", "items": { "enum": ["major", "minor", "patch"] } }
+                }
+              }
+            ]
+          }
+        },
+        "sources": {
+          "description": "Extra dependencies to check, such as your own libraries or extensions.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "extension": { "type": "string", "description": "Extension resource name." },
+              "macro": { "type": "string", "description": "Version macro, e.g. MYLIB_VERSION for #macro MYLIB_VERSION \"1.2.3\"." },
+              "github": { "type": "string", "pattern": "^[\\w.-]+/[\\w.-]+$", "description": "owner/repo on GitHub; versions come from its releases (or tags)." },
+              "codeberg": { "type": "string", "pattern": "^[\\w.-]+/[\\w.-]+$", "description": "owner/repo on Codeberg." },
+              "marketplace": { "type": "integer", "description": "GameMaker Marketplace asset number (marketplace.gamemaker.io/assets/<number>)." },
+              "asset": { "type": "string", "description": "Regular expression for the release asset with the .yymps; a capture group gives the version." },
+              "autoUpdate": { "type": "boolean", "description": "Set false to never open update pull requests for this extension." }
+            },
+            "oneOf": [{ "required": ["github"] }, { "required": ["codeberg"] }, { "required": ["marketplace"] }],
+            "anyOf": [{ "required": ["extension"] }, { "required": ["macro"] }]
+          }
+        }
+      }
     }
   }
 }

@@ -36,6 +36,8 @@ jobs:
       # Set "path" if your GameMaker project (.yyp) is not at the repository root.
       # Private repositories without GitHub Code Security still get pull request
       # annotations and a job summary; the upload to code scanning is skipped.
+      # For pull requests that update outdated extensions, give the job
+      # contents: write and pull-requests: write.
       - name: Run GML Code Scanner
         uses: Mackery6969/GML-Code-Scanner@eb807119afd6bc585005f21c3acb2a3d98aa2bbe # v1.0.2
         with:

@@ -18,6 +18,9 @@ inputs:
   runtime:
     description: "Target GameMaker runtime version (e.g. 2023.1.1.81). Defaults to the IDEVersion in the .yyp."
     default: ""
+  runtime-dir:
+    description: "An installed GameMaker runtime folder, such as the runtime-dir output of bscotch/igor-setup. Projects on its release line are checked against its exact function list. Leave empty to use the bundled data."
+    default: ""
   upload:
     description: "Upload results to GitHub code scanning (Security tab): auto (upload, warn if unavailable), true (fail if the upload fails) or false."
     default: "auto"
@@ -48,6 +51,15 @@ inputs:
   step-summary:
     description: "Write a findings summary to the job summary."
     default: "true"
+  check-updates:
+    description: "Look for newer versions of the project's extensions and libraries that support its GameMaker version, and report them as gml/outdated-dependency notes. Defaults to dependencies.checkUpdates in the config file, else true."
+    default: ""
+  runtime-updates:
+    description: "Also report newer GameMaker runtimes, and dependency updates that need one. Defaults to dependencies.runtimeUpdates in the config file, else false."
+    default: ""
+  auto-update:
+    description: "Open pull requests that update extensions, like Dependabot, on runs on the default branch (push, schedule or manual). Needs contents: write and pull-requests: write. Defaults to dependencies.autoUpdate in the config file, else true."
+    default: ""
 
 outputs:
   sarif-file:
@@ -66,6 +78,10 @@ outputs:
     description: "Number of reported warning-level findings."
   notes:
     description: "Number of reported note-level findings."
+  outdated-dependencies:
+    description: "Number of extensions and libraries with a compatible update."
+  update-pull-requests:
+    description: "URLs of the update pull requests opened by this run, space-separated."
 
 runs:
   using: "node24"

@@ -6,7 +6,7 @@ import type { FileScopes } from "../semantic/scope.ts";
 import type { ResolvedConfig } from "./config.ts";
 
 export type Severity = "error" | "warning" | "note";
-export type Category = "security" | "correctness" | "performance" | "maintainability" | "project";
+export type Category = "security" | "correctness" | "performance" | "maintainability" | "project" | "dependencies";
 
 /**
  * Which query suite a rule first appears in (mirrors CodeQL's suites):

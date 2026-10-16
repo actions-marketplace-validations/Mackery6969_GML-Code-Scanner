@@ -20,9 +20,11 @@ jobs:
     name: Scan
     runs-on: ubuntu-latest
     permissions:
-      contents: read # for actions/checkout to fetch code
+      # Fetch the code, and push branches for extension update pull requests.
+      # To turn those off, use contents: read and pull-requests: read, and set auto-update: false.
+      contents: write
       security-events: write # upload results to code scanning (skipped where it isn't available)
-      pull-requests: read # annotate only the lines a pull request changes
+      pull-requests: write # annotate only the lines a pull request changes, and open extension update pull requests
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7

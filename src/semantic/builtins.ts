@@ -1,13 +1,8 @@
 import data from "./builtins.json" with { type: "json" };
+import { F_DEPRECATED, F_PURE, type RuntimeSpec, V_DEPRECATED, V_INSTANCE, V_READONLY } from "./runtime-spec.ts";
 
 type FunctionEntry = [minArgs: number, maxArgs: number, returnType: string, flags: number, runtimeMask: number];
 type VariableEntry = [type: string, flags: number, runtimeMask: number];
-
-const F_DEPRECATED = 1;
-const F_PURE = 2;
-const V_DEPRECATED = 1;
-const V_READONLY = 2;
-const V_INSTANCE = 4;
 
 export interface BuiltinFunction {
   name: string;
@@ -34,8 +29,37 @@ const functions = data.functions as unknown as Record<string, FunctionEntry>;
 const variables = data.variables as unknown as Record<string, VariableEntry>;
 const constants = data.constants as unknown as Record<string, VariableEntry>;
 
-/** Runtime versions the database was generated from, newest first. */
-export const KNOWN_RUNTIMES: readonly string[] = data.runtimes;
+const runtimes: string[] = [...data.runtimes];
+
+/** Runtime versions the database covers: the bundled ones newest first, then any added with addRuntime(). */
+export const KNOWN_RUNTIMES: readonly string[] = runtimes;
+
+/**
+ * Adds an installed runtime (e.g. one set up by bscotch/igor-setup) to the database, so
+ * projects on its release line get exact availability checks. Symbols keep the bundled
+ * signatures; ones the bundled runtimes lack are added. Returns the runtime index.
+ */
+export function addRuntime(spec: RuntimeSpec): number {
+  const existing = runtimes.indexOf(spec.version);
+  if (existing >= 0) return existing;
+  if (runtimes.length >= 31) throw new Error("Too many GameMaker runtimes loaded.");
+  const index = runtimes.push(spec.version) - 1;
+  const bit = 1 << index;
+  for (const [name, [min, max, returnType, flags]] of spec.functions) {
+    if (Object.hasOwn(functions, name)) functions[name][4] |= bit;
+    else functions[name] = [min, max, returnType, flags, bit];
+  }
+  for (const [table, source] of [
+    [variables, spec.variables],
+    [constants, spec.constants],
+  ] as const) {
+    for (const [name, [type, flags]] of source) {
+      if (Object.hasOwn(table, name)) table[name][2] |= bit;
+      else table[name] = [type, flags, bit];
+    }
+  }
+  return index;
+}
 
 export function getBuiltinFunction(name: string): BuiltinFunction | undefined {
   if (!Object.hasOwn(functions, name)) return undefined;
@@ -89,12 +113,15 @@ export function listBuiltinFunctionNames(): string[] {
 /**
  * Resolves a project's runtime/IDE version (e.g. `2023.1.1.62`) to the index of a
  * runtime in the database with the same `year.minor`, or -1 when none matches.
- * Availability checks are only safe against an exact release line.
+ * Availability checks are only safe against an exact release line. An exact version
+ * wins, then the most recently added runtime of that line.
  */
 export function resolveRuntimeIndex(version: string | undefined): number {
   if (!version) return -1;
+  const exact = runtimes.indexOf(version);
+  if (exact >= 0) return exact;
   const line = version.split(".").slice(0, 2).join(".");
-  return KNOWN_RUNTIMES.findIndex((v) => v.split(".").slice(0, 2).join(".") === line);
+  return runtimes.findLastIndex((v) => v.split(".").slice(0, 2).join(".") === line);
 }
 
 export function availableInRuntime(runtimeMask: number, runtimeIndex: number): boolean {
