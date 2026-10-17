@@ -1,0 +1,4 @@
+# Claude Autofix settings for this repository. See https://github.com/Mackery6969/Claude-Autofix#per-repository-settings
+verify-command: npm ci && npm run typecheck && npm test
+exclude:
+  - test/fixtures
